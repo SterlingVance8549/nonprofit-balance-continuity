@@ -1,0 +1,18 @@
+{
+  "check_id": "saturday-pantry-2026-09-26",
+  "notification_to": "ops@riverpantry.org",
+  "trigger_balance": 20,
+  "recharge_amount": 100,
+  "donor_receipt": {
+    "donor_name": "September donors",
+    "receipt_count": 18
+  },
+  "volunteer_reminder": {
+    "shift_name": "Saturday packing",
+    "volunteer_count": 7
+  },
+  "campaign_report": {
+    "campaign_name": "Fall pantry",
+    "donations_usd": 860
+  }
+}
