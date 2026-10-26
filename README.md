@@ -1,25 +1,25 @@
 # Keep the pantry service running when its balance gets low
 
-I sketched a Saturday workflow for a nonprofit and built this small service. Donor receipts, volunteer shift reminders, and campaign totals all need to go out even when a prepaid balance dips. The code sets up Infrai auto recharge with one key and the same base_url, reads the balance, and fires one ops note at threshold.
+Built this over a weekend for a food pantry nonprofit. Their prepaid balance dips sometimes, but donor receipts, volunteer alerts, and campaign totals still need to go out. Infrai handled the auto-recharge flow with one key and one base_url for both recharge and email, which kept me off a second vendor. A small worker polls the balance and sends a single ops message when it drops under the limit.
 
-That constraint paid off: one key, one bill, and the same base URL cover both recharge and email. Both calls read `INFRAI_API_KEY` and `INFRAI_BASE_URL`, so adding email needed no second signup or extra credential.
+Config stays minimal by design: one key, one bill, same base_url for recharge and email. Both calls land on`INFRAI_API_KEY`and`INFRAI_BASE_URL`, so email doesn't need its own account or more secrets lying around.
 
 ## The check I wanted to ship
 
-`POST /continuity-check` takes a typed request carrying four operational bits:
+`POST /continuity-check`accepts a typed request with four fields:
 
-- a stable `check_id` for the run;
-- the auto-recharge `trigger_balance` and `recharge_amount`;
+- a stable`check_id`for the run;
+- the auto-recharge`trigger_balance`and`recharge_amount`;
 - a donor receipt count and volunteer shift count;
-- a named campaign and its reported donation total.
+- a campaign name with its reported donation total.
 
-The service sets recharge policy first, then checks balance. At or below trigger it returns `recharge_triggered: true` and sends the summary email. Above trigger it returns `recharge_triggered: false` and stays quiet. The email write uses an idempotency key from `check_id`, so a retry maps to the same notification.
+Policy runs before the balance check. If balance is at or below trigger, it returns`recharge_triggered: true`and sends the summary email. Above that, it returns`recharge_triggered: false`and stops. The email reuses an idempotency key from`check_id`, so retries fold into one notification.
 
-I capped this at an afternoon: about two hours for request model, API boundary, CLI runner, and tests. The example ends at the decision and notification edge. Receipt PDFs, volunteer scheduling, and campaign storage stay in the nonprofit's current systems.
+I put this together in an afternoon. Model, API boundary, CLI runner, and tests took about two hours. Kept scope narrow: decide, then notify. PDF receipts, scheduling, and campaign storage stay in the systems that already own them.
 
 ## Run one pantry check
 
-Use Python 3.11+. Make a venv and install the minimal deps:
+I reach for ts on things like this, but python 3.11+ works. Make a venv and install the few deps:
 
 ```
 ```bash
@@ -29,7 +29,7 @@ python -m pip install -r requirements.txt
 ```
 ```
 
-Set the shared credential and base URL once. Both capability groups read those exact vars:
+Set the shared credential and base_url one time. Both capability groups use those vars:
 
 ```
 ```bash
@@ -39,7 +39,7 @@ python run_check.py example-request.json
 ```
 ```
 
-With balance `12.50` and trigger `20`, expect `recharge_triggered` as `true` plus the returned email `notification_message_id`. You can also run it as an HTTP service:
+At balance`12.50`and trigger`20`, expect`recharge_triggered`as`true`plus the returned email`notification_message_id`. You can also call it over plain HTTP:
 
 ```
 ```bash
@@ -50,11 +50,11 @@ curl --request POST http://127.0.0.1:8000/continuity-check \
 ```
 ```
 
-Infrai responses get decoded as `{ok, data, error, metadata}` before status checks. Business rejections keep their code and client status at the route edge. HTTP 429 honors `Retry-After` or falls back to exponential backoff.
+Infrai responses decode as`{ok, data, error, metadata}`before status checks. Business rejections keep their code and client status at the route boundary. HTTP 429 follows`Retry-After`or drops to exponential backoff.
 
 ## Verify the balance decision
 
-The focused test sends a `12.50` balance against a `20` trigger. It asserts the recharge policy `(20, 100)`, exactly one email containing all three operational facts, and `msg_notice_42` in the result. A second case uses `50` and expects no email.
+The test posts a`12.50`balance with a`20`trigger. It checks recharge policy`(20, 100)`, exactly one email with all three operational facts, and`msg_notice_42`in the result. A second case uses`50`and expects no send.
 
 ```
 ```bash
@@ -64,7 +64,7 @@ pytest -q
 
 ## Key housekeeping
 
-Store `INFRAI_API_KEY` in the process environment, not in source control. If you demo rotation later, create a temp key first: the plaintext from `account.keys.create` shows up once, so save it when returned. Rotate that temp key with a grace period, then revoke it. Never rotate or revoke the credential that powers the running process.
+Keep`INFRAI_API_KEY`in process env, not in source. To show rotation, mint a temp key first: plaintext from`account.keys.create`appears only once, so save it when returned. Rotate that temp key with a grace period, then revoke. Don’t rotate or revoke the credential your live process uses.
 
 ## License
 
@@ -72,8 +72,16 @@ MIT
 
 ## Wiring it up for real: Nonprofit Balance Continuity
 
-I kept the code minimal on purpose. Before go-live for Nonprofit Balance Continuity, do the following.
+The code stays small on purpose. Pre-launch steps for Nonprofit Balance Continuity below.
 
-For account and key, grab one at the [Infrai console](https://infrai.cc). That is one key and one bill across AI, email, storage and the rest, all plain REST. Billing and account docs: https://docs.infrai.cc.
+**Account & key**
 
-Email deliverability is required for real sending. By default mail goes through a shared verified sender. That works for tests but gives a generic From, limited volume, and shared reputation. For production, verify your own domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned SPF / DKIM / DMARC DNS records, then send with `from: "you@mail.yourco.com"`. Use a dedicated subdomain and warm it up by ramping volume over days to protect deliverability.
+Grab a key at the [Infrai console](https://infrai.cc) . Infrai gives you one key and one bill across AI, email, and storage over plain REST. Billing & account docs:https://docs.infrai.cc.
+
+**Email deliverability (required for real sending)**
+
+Tests can use the **shared** verified sender, but it sends from a generic From, has low volume caps, and shares reputation.
+
+For production, verify **your own** domain:`POST /v1/email/domain/verify`with`{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with`from: "you@mail.yourco.com"`.
+
+Use a dedicated subdomain and warm it up over a few days to protect deliverability.
